@@ -36,8 +36,20 @@ else
 fi
 
 # check if limited by cgroups like in a container
-if [ -e /sys/fs/cgroup/cpu/cpu.cfs_quota_us) -a -e /sys/fs/cgroup/cpu/cpu.cfs_period_us ] ; the
+# cgroup v1
+# https://git.kernel.org/pub/scm/linux/kernel/git/tj/cgroup.git/tree/Documentation/admin-guide/cgroup-v1
+if [ -e /sys/fs/cgroup/cpu/cpu.cfs_quota_us -a -e /sys/fs/cgroup/cpu/cpu.cfs_period_us ] ; then
   CFS_QUOTA_US=$(cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us)
   CFS_PERIOD_US=$(cat /sys/fs/cgroup/cpu/cpu.cfs_period_us)
-  printf "cgroup cpu limitation : %d.%d\n" $(( CFS_QUOTA_US / CFS_PERIOD_US )) $(( CFS_QUOTA_US % CFS_PERIOD_US )) 
+fi
+# cgroup v2
+# https://git.kernel.org/pub/scm/linux/kernel/git/tj/cgroup.git/tree/Documentation/admin-guide/cgroup-v2.rst
+if [ -e /sys/fs/cgroup/cpu.max ] ; then
+  CFS_QUOTA_US=$(cat /sys/fs/cgroup/cpu.max | cut -f1 -d' ')
+  CFS_PERIOD_US=$(cat /sys/fs/cgroup/cpu.max | cut -f2 -d' ')
+fi
+if [ -n "${CFS_QUOTA_US}" -a -n "${CFS_PERIOD_US}" ] ; then
+  if [ "${CFS_QUOTA_US}" -ge 0 -a "${CFS_PERIOD_US}" -ge 0 ] ; then
+    printf "cgroup cpu limitation : %d.%d\n" $(( CFS_QUOTA_US / CFS_PERIOD_US )) $(( CFS_QUOTA_US % CFS_PERIOD_US )) 
+  fi
 fi
