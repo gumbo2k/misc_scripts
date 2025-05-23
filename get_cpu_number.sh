@@ -22,7 +22,7 @@ if [ "$(uname)" = 'Darwin' ] ; then
   printf "sysctl -n hw.logicalcpu_max / hw.physicalcpu_max : %d / %d\n" "$(sysctl -n hw.logicalcpu_max)" "$(sysctl -n hw.physicalcpu_max)"
 fi
 
-#lscpu
+# lscpu
 if CMDLSCPU=$(command -v lscpu) ; then
   LCPUS=$(lscpu -p | grep -v '^#' | cut -f1 -d',' | sort -n | uniq | wc -l)
   CORES=$(lscpu -p | grep -v '^#' | cut -f2 -d',' | sort -n | uniq | wc -l)
@@ -33,4 +33,11 @@ if CMDLSCPU=$(command -v lscpu) ; then
   lscpu --all --extended
 else
   printf "lscpu not installed.\n"
+fi
+
+# check if limited by cgroups like in a container
+if [ -e /sys/fs/cgroup/cpu/cpu.cfs_quota_us) -a -e /sys/fs/cgroup/cpu/cpu.cfs_period_us ] ; the
+  CFS_QUOTA_US=$(cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us)
+  CFS_PERIOD_US=$(cat /sys/fs/cgroup/cpu/cpu.cfs_period_us)
+  printf "cgroup cpu limitation : %d.%d\n" $(( CFS_QUOTA_US / CFS_PERIOD_US )) $(( CFS_QUOTA_US % CFS_PERIOD_US )) 
 fi
