@@ -5,24 +5,24 @@ if [ "$(uname)" = 'Linux' ] ; then
   PREFIX='_'
 fi
 if CMDGETCONF=$(command -v getconf) ; then
-  printf "getconf ${PREFIX}NPROCESSORS_ONLN / ${PREFIX}NPROCESSORS_CONF : %d / %d \n" "$(${CMDGETCONF} ${PREFIX}NPROCESSORS_ONLN)" "$(${CMDGETCONF} ${PREFIX}NPROCESSORS_CONF)"
+  printf "getconf ${PREFIX}NPROCESSORS_ONLN / ${PREFIX}NPROCESSORS_CONF : %d / %d\n" "$(${CMDGETCONF} ${PREFIX}NPROCESSORS_ONLN)" "$(${CMDGETCONF} ${PREFIX}NPROCESSORS_CONF)"
 else
   printf "getconf not installed.\n"
 fi
 
+# on XCP-ng / xenserver "--all" command will return VCPUs-max of a vm
 if CMDNPROC=$(command -v nproc) ; then
-  printf "nproc / nproc --all : %d / %d \n" "$(${CMDNPROC})" $(${CMDNPROC} --all)
+  printf "nproc / nproc --all : %d / %d\n" "$(${CMDNPROC})" $(${CMDNPROC} --all)
 else
   printf "nproc not installed.\n"
 fi
 
 # macOS
 if [ "$(uname)" = 'Darwin' ] ; then
-  printf "sysctl -n hw.logicalcpu_max / hw.physicalcpu_max : %d / %d \n" "$(sysctl -n hw.logicalcpu_max)" "$(sysctl -n hw.physicalcpu_max)"
+  printf "sysctl -n hw.logicalcpu_max / hw.physicalcpu_max : %d / %d\n" "$(sysctl -n hw.logicalcpu_max)" "$(sysctl -n hw.physicalcpu_max)"
 fi
 
 #lscpu
-
 if CMDLSCPU=$(command -v lscpu) ; then
   LCPUS=$(lscpu -p | grep -v '^#' | cut -f1 -d',' | sort -n | uniq | wc -l)
   CORES=$(lscpu -p | grep -v '^#' | cut -f2 -d',' | sort -n | uniq | wc -l)
