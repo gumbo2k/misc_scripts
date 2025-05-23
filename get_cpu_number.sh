@@ -18,7 +18,7 @@ fi
 
 # macOS
 if [ "$(uname)" = 'Darwin' ] ; then
-  printf "sysctl -n hw.logicalcpu_max / hw.physicalcpu_max : \n" "$(sysctl -n hw.logicalcpu_max)" "$(sysctl -n hw.physicalcpu_max)"
+  printf "sysctl -n hw.logicalcpu_max / hw.physicalcpu_max : %d / %d \n" "$(sysctl -n hw.logicalcpu_max)" "$(sysctl -n hw.physicalcpu_max)"
 fi
 
 #lscpu
