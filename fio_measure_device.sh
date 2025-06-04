@@ -1,110 +1,176 @@
 #!/bin/bash
 
-DEVICE=$1
-SIZE=10g
+debug_output() {
+  if [ "${DEBUG}"=="1" ] ; then
+    echo "DEBUG: $*"
+  fi
+}
+
+#probably not needed as fio uses directio but the drive itself might have some async write back caches
+sync_and_wait() {
+  echo "Sync and wait 5 sec."
+  sync
+  sleep 5
+}
+
+# probably not needed, as fio invalidates caches before reading a file.
+# reading an unrelated large file from the same disk might be the better way,
+# as it will also flush caches in the drive itself
+flush_caches_and_wait() {
+  sync
+  echo 3 > /proc/sys/vm/drop_caches
+  blockdev --flushbufs /dev/${DEVICE}
+  hdparm -F /dev/${DEVICE}
+}
+
+# Select tests to perform
+DO_SEQUENTIALREAD=true
+DO_SEQUENTIALWRITE=true
+DO_RANDOMREAD=true
+DO_RANDOMWRITE=true
+#DO_QD1_RANDOMREAD=true
+#DO_QD1_RANDOMWRITE=true
+
+TESTFILESIZE=10g
+TESTFILENUM=6
+TESTFILENAMEPFX=fiotestfile
 RUNTIME=60
-RNDREADRUNTIME=100
-RUNID=$(date +'%y%m%d%H%M'-$$)
 
-if [[ -z $DEVICE ]] ; then
-  echo DEVICE is empty - we need a device name passed as first parameter
-  exit 1
-fi
-
-MOUNT=$(df | grep /dev/$DEVICE | awk '{ print $6 }')
-
-if [[ -z $MOUNT ]] ; then
-  echo Could not find mount point for $DEVICE
-  exit 1
-fi
-
-echo "Mountpoint for device $DEVICE is $MOUNT"
-
-# Make sure the report file name doesn't contain illegal characters
-DEVICEREPORTNAME=$(echo $DEVICE | tr -c '[:alnum:]' '_')
-
-# Create a file to do IO upon
-SEQIODEPTH=8
 SEQIOSIZE=1m
-let TARGETRNDIODEPTH=192
+SEQIODEPTH=8
+
 RNDIOSIZE=4k
-DOSEQUENTIALWRITE=true
-DOSEQUENTIALREAD=true
-DORANDOMREAD=true
-DORANDOMWRITE=true
-DOONLYLATENCY=false
+TARGETRNDIODEPTH=192
 
-echo Target IO Depth for RANDOM = $TARGETRNDIODEPTH
-let NUMDEVICES=6
-let RNDIODEPTH=$TARGETRNDIODEPTH/$NUMDEVICES
+RNDIODEPTH=$(( TARGETRNDIODEPTH / TESTFILENUM ))
+TOTALRNDIODEPTH=$(( RNDIODEPTH * TESTFILENUM ))
 
-echo Effective IO Dept per device file for RANDOM = $RNDIODEPTH
+DEVICE=$1
+RUNID=$(date +'%y%m%d%H%M'-$$)-$(echo ${DEVICE} | tr -c '[:alnum:]' '_')
 
-
-
-for filename in testfile testfile2 testfile3 testfile4 testfile5 testfile6 
-do
-if [[ -e $MOUNT/$filename ]] ; then
- /bin/true
-else
- fio --name=prefill --filename=$MOUNT/$filename --bs=$SEQIOSIZE --size=$SIZE --rw=write --direct=1 --ioengine=libaio --iodepth=$SEQIODEPTH
+if [ -z ${DEVICE} ] ; then
+  echo "Usage:"
+  echo "  $0 DEVICE"
+  echo "DEVICE is empty - we need a device name of a mounted device passed as first parameter. E.g. 'sda1' or 'mapper/ubuntu--vg-ubuntu--lv'"
+  exit 1
 fi
+
+MOUNT=$(df | grep '^/dev/'${DEVICE} | awk '{ print $6 }')
+
+if [ -z ${MOUNT} ] ; then
+  echo "Could not find mount point for ${DEVICE}"
+  exit 1
+fi
+
+echo "Mountpoint for device ${DEVICE} is ${MOUNT}"
+
+# Create files to do IO upon. This avoids metadata updates during later tests.
+for filenumber in $(seq 1 ${TESTFILENUM}) ; do
+  filename=${TESTFILENAMEPFX}${filenumber}
+  if [ -e ${MOUNT}/$filename ] ; then
+    echo Skipping creation of ${MOUNT}/$filename
+  else
+    echo Creating test file ${MOUNT}/$filename of size ${TESTFILESIZE}
+    fio --name=prefill --filename=${MOUNT}/$filename --bs=${SEQIOSIZE} --size=${TESTFILESIZE} --rw=write \
+      --direct=1 --ioengine=libaio --iodepth=${SEQIODEPTH} \
+      --output=${RUNID}-testfile-prefill.out
+    echo
+    if [[ $filenumber -eq ${TESTFILENUM} ]] ; then
+      sync_and_wait
+    fi
+  fi
 done
 
-if [[ $DOONLYLATENCY != true ]] ; then
+#Sequential Read
+if [ "${DO_SEQUENTIALREAD}" = true ] ; then
+  echo "## Sequential Read. One process. QD=${SEQIODEPTH}."
+  fio --name=seq_read --filename=${MOUNT}/${TESTFILENAMEPFX}1 --bs=${SEQIOSIZE} --rw=read \
+    --time_based --runtime=${RUNTIME} \
+    --direct=1 --ioengine=libaio --iodepth=${SEQIODEPTH} \
+    --output=${RUNID}-seq-read.out
+  echo
+  echo Look at the bandwidth:
+  grep '^  read:'  ${RUNID}-seq-read.out
+  grep '^   bw '   ${RUNID}-seq-read.out
+  echo
+fi
 
 #Sequential Write
-if [[ $DOSEQUENTIALWRITE = true ]] ; then
- echo Sequential Write QD=$SEQIODEPTH
- fio --name=seq_write --filename=$MOUNT/testfile --bs=$SEQIOSIZE --rw=write --time_based --runtime=$RUNTIME --direct=1 --ioengine=libaio --iodepth=$SEQIODEPTH --output=$RUNID-$DEVICEREPORTNAME-seq-write.out
- echo
- sleep 5
+if [ "${DO_SEQUENTIALWRITE}" = true ] ; then
+  echo "## Sequential Write. One process. QD=${SEQIODEPTH}."
+  fio --name=seq_write --filename=${MOUNT}/${TESTFILENAMEPFX}1 --bs=${SEQIOSIZE} --rw=write \
+    --time_based --runtime=${RUNTIME} \
+    --direct=1 --ioengine=libaio --iodepth=${SEQIODEPTH} \
+    --output=${RUNID}-seq-write.out
+  echo
+  echo Look at the bandwidth:
+  grep '^  write:' ${RUNID}-seq-write.out
+  grep '^   bw '   ${RUNID}-seq-write.out
+  echo
+  sync_and_wait
 fi
 
-#Sequential Read
-if [[ $DOSEQUENTIALREAD = true ]] ; then
- echo Sequential Read QD=$SEQIODEPTH
- fio --name=seq_read --filename=$MOUNT/testfile --bs=$SEQIOSIZE --rw=read --time_based --runtime=$RUNTIME --direct=1 --ioengine=libaio --iodepth=$SEQIODEPTH --output=$RUNID-$DEVICEREPORTNAME-seq-read.out
- echo
- sleep 5
-fi
 
+if [ "${DO_RANDOMREAD}" = true -o "${DO_RANDOMWRITE}" = true ] ; then
+  echo "## Random IO with ${TESTFILENUM} parallel clients and deep queue."
+  echo "Effective IO Depth per device file for RANDOM tests: TARGET_IO_DEPTH ( ${TARGETRNDIODEPTH} ) / NUMER_OF_TESTFILES ( ${TESTFILENUM} ) = ${RNDIODEPTH}"
+  echo "Total IO Depth for RANDOM = ${TOTALRNDIODEPTH}"
+fi
 #Random Read
-if [[ $DORANDOMREAD = true ]] ; then
- echo Random Read QD=$TARGETRNDIODEPTH
- fio --name=global --group_reporting --bs=$RNDIOSIZE --rw=randread --time_based --runtime=$RUNTIME --direct=1 --ioengine=libaio --iodepth=$RNDIODEPTH --output=$RUNID-$DEVICEREPORTNAME-rnd-read.out --name=read1 --filename=$MOUNT/testfile --name=read2 --filename=$MOUNT/testfile2 --name=read3 --filename=$MOUNT/testfile3 --name=read4 --filename=$MOUNT/testfile4 --name=read5 --filename=$MOUNT/testfile5 --name=read6 --filename=$MOUNT/testfile6
- echo
+if [ "${DO_RANDOMREAD}" = true ] ; then
+  echo "## Random Read. ${TESTFILENUM} processes. QD=${TOTALRNDIODEPTH}. Per process QD=${RNDIODEPTH}"
+  fio --name=global --group_reporting --bs=${RNDIOSIZE} --rw=randread \
+    --time_based --runtime=${RUNTIME} \
+    --direct=1 --ioengine=libaio --iodepth=${RNDIODEPTH} --output=${RUNID}-rnd-read.out \
+    $(for x in $(seq 1 ${TESTFILENUM}) ; do printf " --name=read%d --filename=%s/%s%d " ${x} "${MOUNT}" "${TESTFILENAMEPFX}" ${x} ; done)
+  echo
+  echo Look at the IOPS:
+  grep '^  read:'  ${RUNID}-rnd-read.out
+  grep '^   iops ' ${RUNID}-rnd-read.out
+  echo
 fi
 
 #Random Write
-if [[ $DORANDOMWRITE = true ]] ; then 
-  echo Random Write QD-$TARGETRNDIODEPTH
-  echo Per Device QD-$RNDIODEPTH
-  fio --name=global --group_reporting --bs=$RNDIOSIZE --rw=randwrite --time_based --runtime=$RUNTIME --direct=1 --ioengine=libaio --iodepth=$RNDIODEPTH --output=$RUNID-$DEVICEREPORTNAME-rnd-write.out --name=write1 --filename=$MOUNT/testfile --name=write2 --filename=$MOUNT/testfile2 --name=write3 --filename=$MOUNT/testfile3 --name=write4 --filename=$MOUNT/testfile4 --name=read5 --filename=$MOUNT/testfile5 --name=read6 --filename=$MOUNT/testfile6
+if [ "${DO_RANDOMWRITE}" = true ] ; then 
+  echo "## Random Write. ${TESTFILENUM} processes. QD=${TOTALRNDIODEPTH}. Per process QD=${RNDIODEPTH}"
+  fio --name=global --group_reporting --bs=${RNDIOSIZE} --rw=randwrite \
+    --time_based --runtime=${RUNTIME} \
+    --direct=1 --ioengine=libaio --iodepth=${RNDIODEPTH} --output=${RUNID}-rnd-write.out \
+    $(for x in $(seq 1 ${TESTFILENUM}) ; do printf " --name=write%d --filename=%s/%s%d " ${x} "${MOUNT}" "${TESTFILENAMEPFX}" ${x} ; done)
   echo
+  echo Look at the IOPS:
+  grep '^  write:'  ${RUNID}-rnd-write.out
+  grep '^   iops '  ${RUNID}-rnd-write.out
+  echo
+  sync_and_wait
 fi
 
-fi
+
 #
 # Repeat for single OIO
 #
-echo
-echo "Single Outstanding IO for latency"
-echo
-
-#Random Write - Single OIO
-RNDIODEPTH=1
-if [[ $DORANDOMWRITE = true ]] ; then 
-  echo Random Write QD-$RNDIODEPTH
-  fio --name=global --group_reporting --bs=$RNDIOSIZE --rw=randwrite --time_based --runtime=$RUNTIME --direct=1 --ioengine=libaio --iodepth=$RNDIODEPTH --output=$RUNID-$DEVICEREPORTNAME-QE-$RNDIODEPTH-rnd-write.out --name=write1 --filename=$MOUNT/testfile --name=write2 --filename=$MOUNT/testfile2
+if [ "${DO_QD1_RANDOMREAD}" = true -o "${DO_QD1_RANDOMWRITE}" = true ] ; then 
+  echo "## Random IO with shallow queue."
+  echo "Single Outstanding IO for latency (iodepth=1)"
+  echo "Look at the latecy distribution in the report file afterwards."
+fi
+#Random Read - Single OIO
+if [ "${DO_QD1_RANDOMREAD}" = true ] ; then
+  RNDIODEPTH=1
+  echo Random Read. 2 processes. Per process QD=${RNDIODEPTH}
+  fio --name=global  --group_reporting --bs=${RNDIOSIZE} --rw=randread \
+    --time_based --runtime=${RUNTIME} --direct=1 --ioengine=libaio --iodepth=${RNDIODEPTH} --output=${RUNID}-QD-${RNDIODEPTH}-rnd-read.out \
+    $(for x in 1 2 ; do printf " --name=write%d --filename=%s/%s%d " ${x} "${MOUNT}" "${TESTFILENAMEPFX}" ${x} ; done)
   echo
 fi
 
-#Random Read - Single OIO
-RNDIODEPTH=1
-if [[ $DORANDOMREAD = true ]] ; then
- echo Random Read QD=$RNDIODEPTH
- fio --name=global  --group_reporting --bs=$RNDIOSIZE --rw=randread --time_based --runtime=$RUNTIME --direct=1 --ioengine=libaio --iodepth=$RNDIODEPTH --output=$RUNID-$DEVICEREPORTNAME-QD-$RNDIODEPTH-rnd-read.out --name=read1 --filename=$MOUNT/testfile --name=read2 --filename=$MOUNT/testfile2
- echo
+#Random Write - Single OIO
+if [ "${DO_QD1_RANDOMWRITE}" = true ] ; then 
+  RNDIODEPTH=1
+  echo Random Write. 2 processes. Per process QD=${RNDIODEPTH}
+  fio --name=global --group_reporting --bs=${RNDIOSIZE} --rw=randwrite \
+    --time_based --runtime=${RUNTIME} --direct=1 --ioengine=libaio --iodepth=${RNDIODEPTH} --output=${RUNID}-QD-${RNDIODEPTH}-rnd-write.out \
+    $(for x in 1 2 ; do printf " --name=write%d --filename=%s/%s%d " ${x} "${MOUNT}" "${TESTFILENAMEPFX}" ${x} ; done)
+  echo
+  #sync_and_wait
 fi
-
